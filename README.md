@@ -36,13 +36,14 @@ Sem essa permissão, o app não terá acesso ao microfone.
 
 ## Exemplo mínimo 
 
+```swift
 import SwiftUI
 import EmotionClassification
 
 struct ContentView: View {
     @StateObject var audioVM = AudioViewModel()
 
-  var body: some View {
+    var body: some View {
         VStack {
             Text(audioVM.detectedSound)
                 .padding()
@@ -52,3 +53,4 @@ struct ContentView: View {
         }
     }
 }
+
