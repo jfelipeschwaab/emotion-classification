@@ -92,6 +92,8 @@ final class AudioViewModel: ObservableObject {
     
     // MARK: Variável utilizada para exibir na UI a emoção detectada
     @Published var detectedSound: String = "Nenhum som detectado"
+    @Published private(set) var rmsLevel: Float = 0.0
+
     
     // MARK: Inicializadores de classe
     private let audioAnalyzer = AudioAnalyzer()
@@ -113,6 +115,26 @@ final class AudioViewModel: ObservableObject {
             for await result in audioAnalyzer.classificationStream {
                 self.detectedSound = "\(result.identifier) (\(String(format: "%.2f", result.confidence * 100))%)"
             }
+        }
+    }
+    
+    public func process(buffer: AVAudioPCMBuffer) {
+        guard let channelData = buffer.floatChannelData else { return }
+        let channel = channelData[0]
+        let frameLength = Int(buffer.frameLength)
+        var sum: Float = 0.0
+
+        for i in 0..<frameLength {
+            let sample = channel[i]
+            sum += sample * sample
+        }
+        let meanSquare = sum / Float(frameLength)
+        let rms = sqrt(meanSquare)
+
+        let normalized = min(max((rms * 10.0), 0.0), 1.0)
+
+        Task { @MainActor in
+            self.rmsLevel = normalized
         }
     }
     
