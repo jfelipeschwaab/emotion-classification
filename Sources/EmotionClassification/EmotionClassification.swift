@@ -91,7 +91,7 @@ extension AudioAnalyzer: SNResultsObserving {
 @MainActor
 public final class AudioViewModel: ObservableObject {
     
-    // MARK: Variável utilizada para exibir na UI a emoção detectada
+    // MARK: Variáveis para UI
     @Published public var detectedSound: String = "Nenhum som detectado"
     @Published public private(set) var rmsLevel: Float = 0.0
 
@@ -106,6 +106,13 @@ public final class AudioViewModel: ObservableObject {
     /// Função que inicializa a análise do áudio
     public func startAnalysis() {
         audioAnalyzer.start()
+        
+        let inputNode = audioAnalyzer.audioEngine.inputNode
+        let inputFormat = inputNode.inputFormat(forBus: 0)
+        
+        inputNode.installTap(onBus: 0, bufferSize: 8192, format: inputFormat) { [weak self] buffer, _ in
+            self?.process(buffer: buffer)
+        }
     }
     
     /// Função que escuta os resultados da análise do áudio, via Stream
