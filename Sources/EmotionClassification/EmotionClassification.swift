@@ -19,13 +19,13 @@ public final class AudioAnalyzer: NSObject, Sendable {
     public let classificationStream: AsyncStream<SoundClassification>
 
     /// Variável responsável por analisar as faixas de áudio e classificar via request de acordo com o modelo CreateML
-    private let analyzer: SNAudioStreamAnalyzer
+    public let analyzer: SNAudioStreamAnalyzer
     
     /// Variável que gerencia todo o fluxo de áudio, entrada, mixer e saída.
-    private let audioEngine = AVAudioEngine()
+    public let audioEngine = AVAudioEngine()
     
     /// Interno: Continuation usado para enviar resultados
-    private let streamContinuation: AsyncStream<SoundClassification>.Continuation
+    public let streamContinuation: AsyncStream<SoundClassification>.Continuation
 
     public override init() {
         var continuation: AsyncStream<SoundClassification>.Continuation!
