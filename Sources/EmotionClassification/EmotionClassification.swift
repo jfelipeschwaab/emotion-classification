@@ -17,7 +17,7 @@ public struct SoundClassification: Sendable {
 public final class AudioAnalyzer: NSObject, Sendable {
     /// Canal que recebe os dados já analisados.
     public let classificationStream: AsyncStream<SoundClassification>
-
+    
     /// Variável responsável por analisar as faixas de áudio e classificar via request de acordo com o modelo CreateML
     public let analyzer: SNAudioStreamAnalyzer
     
@@ -26,7 +26,7 @@ public final class AudioAnalyzer: NSObject, Sendable {
     
     /// Interno: Continuation usado para enviar resultados
     public let streamContinuation: AsyncStream<SoundClassification>.Continuation
-
+    
     public override init() {
         var continuation: AsyncStream<SoundClassification>.Continuation!
         self.classificationStream = AsyncStream { continuation = $0 }
@@ -42,8 +42,6 @@ public final class AudioAnalyzer: NSObject, Sendable {
         setupModel()
     }
     
-    /// Essa função é responsável por fornecer as regras da análise, por meio de um request, para utilizar o modelo ML treinado
-    /// - WARNING: Modelo CreateML precisa estar inicializado corretamente, associado ao target do projeto.
     private func setupModel() {
         do {
             let model = try ModeloTreinado(configuration: MLModelConfiguration())
@@ -54,29 +52,50 @@ public final class AudioAnalyzer: NSObject, Sendable {
         }
     }
 
-    /// Função responsável por inicializar a captura de áudio em tempo real
-    public func start() {
-        let inputFormat = audioEngine.inputNode.inputFormat(forBus: 0)
-        audioEngine.inputNode.installTap(onBus: 0,
-                                         bufferSize: 8192,
-                                         format: inputFormat) { [weak self] buffer, time in
-            self?.analyzer.analyze(buffer, atAudioFramePosition: time.sampleTime)
+    /// Inicia a análise de áudio
+    /// - Parameter rmsHandler: callback opcional para RMS
+    public func start(withRMSHandler rmsHandler: ((AVAudioPCMBuffer) -> Void)? = nil) {
+        let inputNode = audioEngine.inputNode
+        let inputFormat = inputNode.inputFormat(forBus: 0)
+        
+        // Remove tap anterior caso exista
+        inputNode.removeTap(onBus: 0)
+        
+        inputNode.installTap(onBus: 0,
+                             bufferSize: 8192,
+                             format: inputFormat) { [weak self] buffer, time in
+            guard let self else { return }
+            
+            // Envia para o analyzer
+            self.analyzer.analyze(buffer, atAudioFramePosition: time.sampleTime)
+            
+            // Callback para cálculo de RMS
+            rmsHandler?(buffer)
         }
+        
         do {
-            try audioEngine.start()
+            if !audioEngine.isRunning {
+                try audioEngine.start()
+            }
         } catch {
             print("Erro ao iniciar áudio: \(error)")
         }
     }
     
+    /// Para a análise de áudio
+    public func stop() {
+        audioEngine.inputNode.removeTap(onBus: 0)
+        audioEngine.stop()
+    }
+    
     deinit {
+        stop()
         streamContinuation.finish()
     }
 }
 
 @available(iOS 15.0, macOS 12.0, *)
 extension AudioAnalyzer: SNResultsObserving {
-    /// Função responsável por entregar as análises feitas para a variável streamContinuation
     public func request(_ request: SNRequest, didProduce result: SNResult) {
         if let classificationResult = result as? SNClassificationResult,
            let classification = classificationResult.classifications.first {
@@ -91,31 +110,33 @@ extension AudioAnalyzer: SNResultsObserving {
 @MainActor
 public final class AudioViewModel: ObservableObject {
     
-    // MARK: Variáveis para UI
     @Published public var detectedSound: String = "Nenhum som detectado"
     @Published public private(set) var rmsLevel: Float = 0.0
-
-    // MARK: Inicializadores de classe
+    
     private let audioAnalyzer = AudioAnalyzer()
     private var analysisTask: Task<Void, Never>?
-
+    
     public init() {
         listenToAudioAnalysis()
     }
     
-    /// Função que inicializa a análise do áudio
+    /// Inicia a análise de áudio
     public func startAnalysis() {
-        audioAnalyzer.start()
-        
-        let inputNode = audioAnalyzer.audioEngine.inputNode
-        let inputFormat = inputNode.inputFormat(forBus: 0)
-        
-        inputNode.installTap(onBus: 0, bufferSize: 8192, format: inputFormat) { [weak self] buffer, _ in
+        audioAnalyzer.start { [weak self] buffer in
             self?.process(buffer: buffer)
         }
     }
     
-    /// Função que escuta os resultados da análise do áudio, via Stream
+    /// Para a análise de áudio
+    public func stopAnalysis() {
+        audioAnalyzer.stop()
+        analysisTask?.cancel()
+        analysisTask = nil
+        rmsLevel = 0.0
+        detectedSound = "Nenhum som detectado"
+    }
+    
+    /// Escuta os resultados da análise do áudio
     private func listenToAudioAnalysis() {
         analysisTask = Task {
             for await result in audioAnalyzer.classificationStream {
@@ -125,7 +146,7 @@ public final class AudioViewModel: ObservableObject {
     }
     
     /// Calcula o RMS de um buffer de áudio
-    public func process(buffer: AVAudioPCMBuffer) {
+    private func process(buffer: AVAudioPCMBuffer) {
         guard let channelData = buffer.floatChannelData else { return }
         let channel = channelData[0]
         let frameLength = Int(buffer.frameLength)
@@ -137,7 +158,6 @@ public final class AudioViewModel: ObservableObject {
         }
         let meanSquare = sum / Float(frameLength)
         let rms = sqrt(meanSquare)
-
         let normalized = min(max((rms * 10.0), 0.0), 1.0)
 
         Task { @MainActor in
@@ -146,6 +166,7 @@ public final class AudioViewModel: ObservableObject {
     }
     
     deinit {
+        audioAnalyzer.stop()
         analysisTask?.cancel()
     }
 }
