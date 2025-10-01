@@ -116,6 +116,11 @@ public final class AudioViewModel: ObservableObject {
     private let audioAnalyzer = AudioAnalyzer()
     private var analysisTask: Task<Void, Never>?
     
+    private let BUFFER_SIZE = 6
+    
+    private var classificationBuffer: [SoundClassification] = []
+
+    
     public init() {
         listenToAudioAnalysis()
     }
@@ -132,6 +137,8 @@ public final class AudioViewModel: ObservableObject {
         audioAnalyzer.stop()
         analysisTask?.cancel()
         analysisTask = nil
+        
+        classificationBuffer.removeAll()
         rmsLevel = 0.0
         detectedSound = "Nenhum som detectado"
     }
@@ -140,7 +147,40 @@ public final class AudioViewModel: ObservableObject {
     private func listenToAudioAnalysis() {
         analysisTask = Task {
             for await result in audioAnalyzer.classificationStream {
-                self.detectedSound = "\(result.identifier) (\(String(format: "%.2f", result.confidence * 100))%)"
+                // Em vez de atualizar a UI diretamente, processa o resultado no buffer.
+                self.updateStableSound(with: result)
+            }
+        }
+    }
+    
+    // MARK: - Nova Função para Estabilizar o Resultado
+    /// Processa uma nova classificação, atualizando o buffer e determinando o som mais frequente.
+    private func updateStableSound(with newClassification: SoundClassification) {
+        // Adiciona a nova classificação ao buffer
+        classificationBuffer.append(newClassification)
+        
+        // Mantém o buffer com o tamanho definido (janela deslizante)
+        if classificationBuffer.count > BUFFER_SIZE {
+            classificationBuffer.removeFirst()
+        }
+        
+        // 1. Contar a frequência de cada identificador de som no buffer
+        let counts = classificationBuffer.reduce(into: [:]) { counts, classification in
+            counts[classification.identifier, default: 0] += 1
+        }
+        
+        // 2. Encontrar o identificador mais frequente
+        guard let mostFrequentIdentifier = counts.max(by: { $0.value < $1.value })?.key else {
+            return
+        }
+        
+        // 3. Para obter a confiança mais recente, busca a última ocorrência da classificação mais frequente
+        if let latestOccurrence = classificationBuffer.last(where: { $0.identifier == mostFrequentIdentifier }) {
+            let stableSoundResult = "\(latestOccurrence.identifier) (\(String(format: "%.2f", latestOccurrence.confidence * 100))%)"
+            
+            // 4. Atualiza a UI somente se o som estável mudou, evitando atualizações desnecessárias
+            if self.detectedSound != stableSoundResult {
+                self.detectedSound = stableSoundResult
             }
         }
     }
