@@ -6,10 +6,12 @@ import AVFoundation
 public struct SoundClassification: Sendable {
     public let identifier: String
     public let confidence: Double
+    public let duration: Double
     
-    public init(identifier: String, confidence: Double) {
+    public init(identifier: String, confidence: Double, duration: Double) {
         self.identifier = identifier
         self.confidence = confidence
+        self.duration = duration
     }
 }
 
@@ -99,8 +101,12 @@ extension AudioAnalyzer: SNResultsObserving {
     public func request(_ request: SNRequest, didProduce result: SNResult) {
         if let classificationResult = result as? SNClassificationResult,
            let classification = classificationResult.classifications.first {
+            let durationInSeconds = classificationResult.timeRange.duration.seconds
+            
             let result = SoundClassification(identifier: classification.identifier,
-                                             confidence: classification.confidence)
+                                             confidence: classification.confidence,
+                                             duration: durationInSeconds) // <-- ADICIONADO
+            
             streamContinuation.yield(result)
         }
     }
@@ -118,11 +124,10 @@ public final class AudioViewModel: ObservableObject {
     private var analysisTask: Task<Void, Never>?
     
     private let BUFFER_SIZE = 6
-    
     private var classificationBuffer: [SoundClassification] = []
 
-    private var sessionSoundCounts: [String: Int] = [:]
-    
+    private var sessionSoundDurations: [String: Double] = [:]
+
     public init() {
         listenToAudioAnalysis()
     }
@@ -130,7 +135,7 @@ public final class AudioViewModel: ObservableObject {
     /// Inicia a análise de áudio
     public func startAnalysis() {
         classificationBuffer.removeAll()
-        sessionSoundCounts.removeAll()
+        sessionSoundDurations.removeAll()
         detectedSound = "Analisando..."
         mostFrequentSoundInSession = "Análise em andamento..."
         
@@ -145,22 +150,18 @@ public final class AudioViewModel: ObservableObject {
         analysisTask?.cancel()
         analysisTask = nil
         
-        // **NOVO: Calcula o resultado final da sessão**
         calculateSessionSummary()
         
-        // Reseta o estado de tempo real
         rmsLevel = 0.0
         detectedSound = "Análise parada."
     }
+    
     /// Escuta os resultados da análise do áudio
     private func listenToAudioAnalysis() {
         analysisTask = Task {
             for await result in audioAnalyzer.classificationStream {
-                // Atualiza o buffer para a UI em tempo real
                 self.updateStableSound(with: result)
-                
-                // **NOVO: Acumula a contagem para o resumo final**
-                self.sessionSoundCounts[result.identifier, default: 0] += 1
+                self.sessionSoundDurations[result.identifier, default: 0.0] += result.duration
             }
         }
     }
@@ -188,11 +189,12 @@ public final class AudioViewModel: ObservableObject {
     
     /// **NOVO: Função para calcular o resumo da sessão**
     private func calculateSessionSummary() {
-        // Encontra o elemento no dicionário com o maior valor (maior contagem)
-        if let mostFrequent = sessionSoundCounts.max(by: { $0.value < $1.value }) {
-            let soundIdentifier = mostFrequent.key
-            let count = mostFrequent.value
-            self.mostFrequentSoundInSession = "Predominante: \(soundIdentifier) (\(count) ocorrências)"
+        // Encontra o elemento no dicionário com o maior valor (maior tempo acumulado)
+        if let predominantEmotion = sessionSoundDurations.max(by: { $0.value < $1.value }) {
+            let soundIdentifier = predominantEmotion.key
+            let totalDuration = predominantEmotion.value
+            // Formata o resultado para exibir segundos
+            self.mostFrequentSoundInSession = "Predominante: \(soundIdentifier) (\(String(format: "%.2f", totalDuration))s)"
         } else {
             self.mostFrequentSoundInSession = "Nenhuma emoção detectada na sessão."
         }
