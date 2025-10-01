@@ -111,6 +111,7 @@ extension AudioAnalyzer: SNResultsObserving {
 public final class AudioViewModel: ObservableObject {
     
     @Published public var detectedSound: String = "Nenhum som detectado"
+    @Published public var mostFrequentSoundInSession: String = "Aguardando análise..."
     @Published public private(set) var rmsLevel: Float = 0.0
     
     private let audioAnalyzer = AudioAnalyzer()
@@ -120,6 +121,7 @@ public final class AudioViewModel: ObservableObject {
     
     private var classificationBuffer: [SoundClassification] = []
 
+    private var sessionSoundCounts: [String: Int] = [:]
     
     public init() {
         listenToAudioAnalysis()
@@ -127,6 +129,11 @@ public final class AudioViewModel: ObservableObject {
     
     /// Inicia a análise de áudio
     public func startAnalysis() {
+        classificationBuffer.removeAll()
+        sessionSoundCounts.removeAll()
+        detectedSound = "Analisando..."
+        mostFrequentSoundInSession = "Análise em andamento..."
+        
         audioAnalyzer.start { [weak self] buffer in
             self?.process(buffer: buffer)
         }
@@ -138,50 +145,56 @@ public final class AudioViewModel: ObservableObject {
         analysisTask?.cancel()
         analysisTask = nil
         
-        classificationBuffer.removeAll()
+        // **NOVO: Calcula o resultado final da sessão**
+        calculateSessionSummary()
+        
+        // Reseta o estado de tempo real
         rmsLevel = 0.0
-        detectedSound = "Nenhum som detectado"
+        detectedSound = "Análise parada."
     }
-    
     /// Escuta os resultados da análise do áudio
     private func listenToAudioAnalysis() {
         analysisTask = Task {
             for await result in audioAnalyzer.classificationStream {
-                // Em vez de atualizar a UI diretamente, processa o resultado no buffer.
+                // Atualiza o buffer para a UI em tempo real
                 self.updateStableSound(with: result)
+                
+                // **NOVO: Acumula a contagem para o resumo final**
+                self.sessionSoundCounts[result.identifier, default: 0] += 1
             }
         }
     }
     
+    
     // MARK: - Nova Função para Estabilizar o Resultado
-    /// Processa uma nova classificação, atualizando o buffer e determinando o som mais frequente.
+    /// Processa uma nova classificação para a exibição em tempo real (lógica anterior)
     private func updateStableSound(with newClassification: SoundClassification) {
-        // Adiciona a nova classificação ao buffer
         classificationBuffer.append(newClassification)
-        
-        // Mantém o buffer com o tamanho definido (janela deslizante)
         if classificationBuffer.count > BUFFER_SIZE {
             classificationBuffer.removeFirst()
         }
         
-        // 1. Contar a frequência de cada identificador de som no buffer
-        let counts = classificationBuffer.reduce(into: [:]) { counts, classification in
-            counts[classification.identifier, default: 0] += 1
-        }
+        let counts = classificationBuffer.reduce(into: [:]) { $0[$1.identifier, default: 0] += 1 }
         
-        // 2. Encontrar o identificador mais frequente
-        guard let mostFrequentIdentifier = counts.max(by: { $0.value < $1.value })?.key else {
-            return
-        }
+        guard let mostFrequentIdentifier = counts.max(by: { $0.value < $1.value })?.key else { return }
         
-        // 3. Para obter a confiança mais recente, busca a última ocorrência da classificação mais frequente
         if let latestOccurrence = classificationBuffer.last(where: { $0.identifier == mostFrequentIdentifier }) {
             let stableSoundResult = "\(latestOccurrence.identifier) (\(String(format: "%.2f", latestOccurrence.confidence * 100))%)"
-            
-            // 4. Atualiza a UI somente se o som estável mudou, evitando atualizações desnecessárias
             if self.detectedSound != stableSoundResult {
                 self.detectedSound = stableSoundResult
             }
+        }
+    }
+    
+    /// **NOVO: Função para calcular o resumo da sessão**
+    private func calculateSessionSummary() {
+        // Encontra o elemento no dicionário com o maior valor (maior contagem)
+        if let mostFrequent = sessionSoundCounts.max(by: { $0.value < $1.value }) {
+            let soundIdentifier = mostFrequent.key
+            let count = mostFrequent.value
+            self.mostFrequentSoundInSession = "Predominante: \(soundIdentifier) (\(count) ocorrências)"
+        } else {
+            self.mostFrequentSoundInSession = "Nenhuma emoção detectada na sessão."
         }
     }
     
