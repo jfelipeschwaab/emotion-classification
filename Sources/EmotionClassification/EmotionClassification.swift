@@ -194,7 +194,7 @@ public final class AudioViewModel: ObservableObject {
             let soundIdentifier = predominantEmotion.key
             let totalDuration = predominantEmotion.value
             // Formata o resultado para exibir segundos
-            self.mostFrequentSoundInSession = "Predominante: \(soundIdentifier) (\(String(format: "%.2f", totalDuration))s)"
+            self.mostFrequentSoundInSession = "Predominante: \(soundIdentifier))"
         } else {
             self.mostFrequentSoundInSession = "Nenhuma emoção detectada na sessão."
         }
